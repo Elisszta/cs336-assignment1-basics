@@ -13,4 +13,15 @@
 ### Problem (train_bpe): BPE Tokenizer Training
 - a) All pytest Passed
 
-### 
+### Problem (train_bpe_tinystories): BPE Training on TinyStories
+- a) It took 132s/10G RAM; the longest token is " accomplishment".
+- b) The pre tokenizer part remains constant and can be accelerated by multi-processes while the bpe cycle time increase with the vocab size. 
+
+### Problem (train_bpe_expts_owt): BPE Training on OpenWebText
+- a) WAITING FOR IMPLEMENTING
+
+### Problem (tokenizer): Implementing the tokenizer
+- a) 24 Passed, 1 XPassed
+
+### Problem (tokenizer_experiments): Experiments with tokenizers
+- a)
