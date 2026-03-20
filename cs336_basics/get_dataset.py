@@ -1,11 +1,13 @@
 import os
+
+os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
 from datasets import load_dataset
 from typing import Any, cast
 
 
 def save_as_txt():
-    dataset_dict = load_dataset("roneneldan/TinyStories")
-    target_dir = "../datasets/TinyStories"
+    dataset_dict = load_dataset("Skylion007/openwebtext", num_proc=8)
+    target_dir = "../datasets/openwebtext"
     os.makedirs(target_dir, exist_ok=True)
 
     END_OF_TEXT = "<|endoftext|>"

@@ -1,6 +1,9 @@
 # Datasets / Decoded datasets
 datasets/
 
+# Output / Checkpoint
+cs336_basics/*.pkl
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

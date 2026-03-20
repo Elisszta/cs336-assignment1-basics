@@ -3,6 +3,7 @@ from os import PathLike
 from collections import defaultdict
 import pickle
 from typing import BinaryIO, Iterable, Iterator, Optional
+import heapq
 
 from multiprocessing import Pool
 import regex as re
@@ -28,10 +29,16 @@ class Tokenizer:
             self._update_internal_states()
 
     def _update_internal_states(self):
+        """
+        Update vocab and merges when initialization / load settings
+        """
         self.encode_vocab = {v: k for k, v in self.vocabulary.items()}
         self.merges_dict = {pair: i for i, pair in enumerate(self.merges)}
 
     def initialize_vocabulary(self, special_tokens: list[str]):
+        """
+        Initialize vocab using basic 0-255 and input special tokens
+        """
         self.vocabulary = {i: bytes([i]) for i in range(256)}
         for token in special_tokens:
             self.vocabulary[len(self.vocabulary)] = token.encode("utf-8")
@@ -88,17 +95,12 @@ class Tokenizer:
     def find_string_boundaries(
         self, raw_data: str, desired_num_string_chunks: int
     ) -> list[int]:
-        # assert isinstance(
-        #     split_special_token, bytes
-        # ), "Must represent special token as a bytestring"
-
-        # Get total file size in bytes
+        """
+        Same as above but use to cutting strings, return cutting boundary
+        """
         str_len = len(raw_data)
 
         chunk_size = str_len // desired_num_string_chunks
-
-        # Initial guesses for chunk boundary locations, uniformly spaced
-        # Chunks start on previous index, don't include last index
         chunk_boundaries = [
             i * chunk_size for i in range(desired_num_string_chunks + 1)
         ]
@@ -153,6 +155,9 @@ class Tokenizer:
 
     @staticmethod
     def encode_pretokenizer(raw_data: str) -> list[bytes]:
+        """
+        Used to pre-tokenize encoder str, ret cut list of bytes, each bytes is a word but in bytes
+        """
         text_words = []
         PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
         regex_tokenized_it = re.finditer(PAT, raw_data)
@@ -161,30 +166,77 @@ class Tokenizer:
             text_words.append(encoded_word)
         return text_words
 
+    # @staticmethod
+    # def train_process_chunk(args) -> dict:
+    #     file_path, start, end, special_tokens = args
+    #     special_tokens = sorted(special_tokens, key=len, reverse=True)
+    #     split_pattern = "|".join(re.escape(t) for t in special_tokens)
+    #     with open(file_path, "rb") as f:
+    #         f.seek(start)
+    #         chunk_data = (
+    #             f.read(end - start)
+    #             .decode("utf-8", errors="ignore")
+    #             .replace("\r\n", "\n")
+    #             .replace("\r", "\n")
+    #         )
+    #         stories = re.split(split_pattern, chunk_data)
+    #         final_dict = defaultdict(int)
+    #         for story in stories:
+    #             if not story or story in special_tokens:
+    #                 continue
+    #             for word, freq in Tokenizer.train_pretokenizer(story).items():
+    #                 final_dict[word] += freq
+    #         return final_dict
+
     @staticmethod
     def train_process_chunk(args) -> dict:
+        """
+        Use a buffer size to minimize ram cost
+        """
         file_path, start, end, special_tokens = args
+        final_dict = defaultdict(int)
+
         special_tokens = sorted(special_tokens, key=len, reverse=True)
-        split_pattern = "|".join(re.escape(t) for t in special_tokens)
+        split_pattern = re.compile("|".join(re.escape(t) for t in special_tokens))
+
+        buffer_size = 100 * 1024 * 1024
+
         with open(file_path, "rb") as f:
             f.seek(start)
-            chunk_data = (
-                f.read(end - start)
-                .decode("utf-8", errors="ignore")
-                .replace("\r\n", "\n")
-                .replace("\r", "\n")
-            )
-            stories = re.split(split_pattern, chunk_data)
-            final_dict = defaultdict(int)
-            for story in stories:
-                if not story or story in special_tokens:
-                    continue
-                for word, freq in Tokenizer.train_pretokenizer(story).items():
-                    final_dict[word] += freq
-            return final_dict
+            current_pos = start
+
+            while current_pos < end:
+                read_len = min(buffer_size, end - current_pos)
+                if read_len <= 0:
+                    break
+
+                raw_chunk = f.read(read_len)
+                current_pos += read_len
+
+                chunk_data = (
+                    raw_chunk.decode("utf-8", errors="ignore")
+                    .replace("\r\n", "\n")
+                    .replace("\r", "\n")
+                )
+
+                stories = split_pattern.split(chunk_data)
+                for story in stories:
+                    if not story:
+                        continue
+                    for word, freq in Tokenizer.train_pretokenizer(story).items():
+                        final_dict[word] += freq
+
+                del chunk_data
+                del stories
+
+        return final_dict
 
     @staticmethod
     def encode_stream_chunk(args) -> Iterator[bytes]:
+        """
+        Use re.iter to streamly load strings, and lazy output word (in bytes)
+        One load one sentence
+        """
         chunk_str, start, end, special_tokens = args
         special_tokens = sorted(special_tokens, key=len, reverse=True)
         split_pattern = "|".join(re.escape(t) for t in special_tokens)
@@ -204,6 +256,9 @@ class Tokenizer:
 
     @staticmethod
     def encode_process_chunk(args) -> list[bytes]:
+        """
+        Deprecated, parallel encoder, ram cost too big
+        """
         chunk_str, start, end, special_tokens = args
         sorted_tokens = sorted(special_tokens, key=len, reverse=True)
         split_pattern = "(" + "|".join(re.escape(t) for t in sorted_tokens) + ")"
@@ -218,7 +273,9 @@ class Tokenizer:
                 final_list.extend(Tokenizer.encode_pretokenizer(part))
         return final_list
 
-    def parallel_process_train(self, task_num: int, file_path: str | PathLike) -> dict:
+    def parallel_process_train(
+        self, worker_num: int, task_num: int, file_path: str | PathLike
+    ) -> dict:
         with open(file_path, "rb") as f:
             sentence_split = self.special_tokens[0].encode("utf-8")
             boundaries = self.find_chunk_boundaries(f, task_num, sentence_split)
@@ -227,7 +284,7 @@ class Tokenizer:
             for start, end in zip(boundaries[:-1], boundaries[1:])
         ]
 
-        with Pool(processes=task_num) as pool:
+        with Pool(processes=worker_num) as pool:
             results = pool.map(self.train_process_chunk, tasks)
         global_words = defaultdict(int)
         for result in results:
@@ -237,6 +294,9 @@ class Tokenizer:
         return global_words
 
     def parallel_process_encode(self, task_num: int, input_str: str) -> list[bytes]:
+        """
+        Deprecated, parallel encoder, ram cost too big
+        """
         boundaries = self.find_string_boundaries(input_str, task_num)
         tasks = [
             [input_str, start, end, self.special_tokens]
@@ -255,25 +315,46 @@ class Tokenizer:
         self,
         dataset_path: str | PathLike = "../datasets/TinyStories/validation.txt",
         vocab: int = 1000,
-        task_num: int = 4,
+        worker_num: int = 4,
+        task_num: int = 100,
     ) -> tuple[dict[int, bytes], list[tuple[bytes, bytes]]]:
-        words = self.parallel_process_train(task_num, dataset_path)
+        words = self.parallel_process_train(worker_num, task_num, dataset_path)
         self.initialize_vocabulary(self.special_tokens)
 
         top_pair = []
-        concat_pair = ""
+        concat_pair = b""
         pair_indices = defaultdict(set)
         freq_count = defaultdict(int)
 
         # Preprocess the word to maintain a valid pair indices and freq count
+        # Using Heap to minimize searching time for top_pair
         for word, freq in words.items():
             for i in range(len(word) - 1):
                 pair_indices[(word[i], word[i + 1])].add(word)
                 freq_count[(word[i], word[i + 1])] += freq
 
+        # Original heap is min-heap, so use a reverser to reverse tuple
+        class _RevPair:
+            __slots__ = ["p"]
+
+            def __init__(self, p):
+                self.p = p
+
+            def __lt__(self, other):
+                return self.p > other.p
+
+            def __eq__(self, other):
+                return self.p == other.p
+
+        freq_heap = [(-f, _RevPair(p), p) for p, f in freq_count.items()]
+        heapq.heapify(freq_heap)
+
         merge_times = vocab - len(self.vocabulary)
-        for _ in range(merge_times):
-            top_pair = max(freq_count, key=lambda p: (freq_count[p], p))
+        for i in range(merge_times):
+            # Check if the heap top is correct data by checking dict
+            neg_f, _, top_pair = heapq.heappop(freq_heap)
+            while -neg_f != freq_count[top_pair]:
+                neg_f, _, top_pair = heapq.heappop(freq_heap)
             concat_pair = top_pair[0] + top_pair[1]
             self.vocabulary[len(self.vocabulary)] = concat_pair
             self.merges.append(top_pair)
@@ -286,6 +367,16 @@ class Tokenizer:
                 # Delete all pair indices and frequency counts from previous word
                 for i in range(len(prev_word) - 1):
                     freq_count[(prev_word[i], prev_word[i + 1])] -= freq
+                    # We only push into heap, not pop (Cause we can't)
+                    # They call this lazy load
+                    heapq.heappush(
+                        freq_heap,
+                        (
+                            -freq_count[(prev_word[i], prev_word[i + 1])],
+                            _RevPair((prev_word[i], prev_word[i + 1])),
+                            (prev_word[i], prev_word[i + 1]),
+                        ),
+                    )
                     pair_indices[(prev_word[i], prev_word[i + 1])].discard(prev_word)
                     if freq_count[(prev_word[i], prev_word[i + 1])] == 0:
                         del freq_count[(prev_word[i], prev_word[i + 1])]
@@ -308,13 +399,27 @@ class Tokenizer:
                 # Adding pair indices and frequency counts based on new word
                 for i in range(len(new_word) - 1):
                     freq_count[(new_word[i], new_word[i + 1])] += freq
+                    heapq.heappush(
+                        freq_heap,
+                        (
+                            -freq_count[(new_word[i], new_word[i + 1])],
+                            _RevPair((new_word[i], new_word[i + 1])),
+                            (new_word[i], new_word[i + 1]),
+                        ),
+                    )
                     pair_indices[(new_word[i], new_word[i + 1])].add(t_new_word)
             # Delete useless pairs
             if top_pair in pair_indices:
                 del pair_indices[top_pair]
+            if top_pair in freq_count:
+                del freq_count[top_pair]
 
-            self._update_internal_states()
+            # Re-initialize count heap, reduce memory use
+            if i % 1000 == 0 and i > 0:
+                freq_heap = [(-f, _RevPair(p), p) for p, f in freq_count.items()]
+                heapq.heapify(freq_heap)
 
+        self._update_internal_states()
         return self.vocabulary, self.merges
 
     def _merge_bytes_to_ids(self, word: bytes) -> list[int]:
@@ -414,18 +519,41 @@ if __name__ == "__main__":
     # start_time = time.perf_counter()
     # t = Tokenizer()
     # vocab, _ = t.tokenizer_trainer(
-    #     dataset_path="../datasets/TinyStories/train.txt", vocab=10000, task_num=10
+    #     dataset_path="../datasets/openwebtext/train.txt",
+    #     vocab=32000,
+    #     worker_num=12,
+    #     task_num=240,
     # )
     # end_time = time.perf_counter()
-    # t.save("TinyStories10K_vocab.pkl", "TinyStories10K_merges.pkl")
+    # with open("vocab_owt32k.txt", "w", encoding="utf-8") as f:
+    #     for token_id, token in vocab.items():
+    #         f.write(f"{token_id}: {token}\n")
+
+    # t.save("OpenWebText32K_vocab.pkl", "OpenWebText32K_merges.pkl")
     # print(f"Training finished. Tokenizer training time is: {end_time - start_time}.")
 
-    test_str = "This is a test,<|endoftext|> <|endoftext|> if the Tokenizer functioning well. <|endoftext|>"
-    newT = Tokenizer.from_files("TinyStories10K_vocab.pkl", "TinyStories10K_merges.pkl")
-    encoded = newT.encode(test_str)
-    decoded = newT.decode(encoded)
-    print(
-        f"Raw text are: {test_str}, Encoded tokens are: {encoded}, Decoded text are: {decoded}"
+    start_time = time.perf_counter()
+    t = Tokenizer()
+    vocab, _ = t.tokenizer_trainer(
+        dataset_path="../datasets/TinyStories/train.txt",
+        vocab=10000,
+        worker_num=100,
+        task_num=10,
     )
-    assert test_str == decoded
-    print("Encode & decode test finished!")
+    end_time = time.perf_counter()
+    with open("vocab_ts10k.txt", "w", encoding="utf-8") as f:
+        for token_id, token in vocab.items():
+            f.write(f"{token_id}: {token}\n")
+
+    t.save("TinyStories10K_vocab.pkl", "TinyStories10K_merges.pkl")
+    print(f"Training finished. Tokenizer training time is: {end_time - start_time}.")
+
+    # test_str = "This is a test,<|endoftext|> <|endoftext|> if the Tokenizer functioning well. <|endoftext|>"
+    # newT = Tokenizer.from_files("TinyStories10K_vocab.pkl", "TinyStories10K_merges.pkl")
+    # encoded = newT.encode(test_str)
+    # decoded = newT.decode(encoded)
+    # print(
+    #     f"Raw text are: {test_str}, Encoded tokens are: {encoded}, Decoded text are: {decoded}"
+    # )
+    # assert test_str == decoded
+    # print("Encode & decode test finished!")
