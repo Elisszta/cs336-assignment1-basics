@@ -2,7 +2,8 @@ import os
 from os import PathLike
 from collections import defaultdict
 import pickle
-from typing import BinaryIO, Iterable, Iterator, Optional
+from typing import BinaryIO
+from collections.abc import Iterable, Iterator
 import heapq
 
 from multiprocessing import Pool
@@ -18,9 +19,7 @@ class Tokenizer:
     ) -> None:
         self.vocabulary = vocab if vocab is not None else {}
         self.merges = merges if merges is not None else []
-        self.special_tokens = (
-            special_tokens if special_tokens is not None else ["<|endoftext|>"]
-        )
+        self.special_tokens = special_tokens if special_tokens is not None else ["<|endoftext|>"]
         self.special_tokens_set = {t.encode("utf-8") for t in self.special_tokens}
 
         self.encode_vocab: dict[bytes, int] = {}
@@ -53,9 +52,7 @@ class Tokenizer:
         Chunk the file into parts that can be counted independently.
         May return fewer chunks if the boundaries end up overlapping.
         """
-        assert isinstance(
-            split_special_token, bytes
-        ), "Must represent special token as a bytestring"
+        assert isinstance(split_special_token, bytes), "Must represent special token as a bytestring"
 
         # Get total file size in bytes
         file.seek(0, os.SEEK_END)
@@ -92,18 +89,14 @@ class Tokenizer:
         # Make sure all boundaries are unique, but might be fewer than desired_num_chunks
         return sorted(set(chunk_boundaries))
 
-    def find_string_boundaries(
-        self, raw_data: str, desired_num_string_chunks: int
-    ) -> list[int]:
+    def find_string_boundaries(self, raw_data: str, desired_num_string_chunks: int) -> list[int]:
         """
         Same as above but use to cutting strings, return cutting boundary
         """
         str_len = len(raw_data)
 
         chunk_size = str_len // desired_num_string_chunks
-        chunk_boundaries = [
-            i * chunk_size for i in range(desired_num_string_chunks + 1)
-        ]
+        chunk_boundaries = [i * chunk_size for i in range(desired_num_string_chunks + 1)]
         chunk_boundaries[-1] = str_len
 
         mini_chunk_size = 1024  # Must larger than any special token
@@ -122,16 +115,12 @@ class Tokenizer:
                         initial_position,
                         initial_position + mini_chunk_size,
                     )
-                    min_found_at = (
-                        min(min_found_at, found_at) if found_at != -1 else min_found_at
-                    )
+                    min_found_at = min(min_found_at, found_at) if found_at != -1 else min_found_at
 
                 if min_found_at != str_len:
                     chunk_boundaries[bi] = min_found_at + len(split_special_token)
                     break
-                initial_position += (
-                    mini_chunk_size - 100
-                )  # Avoid cutting down the str at the special token
+                initial_position += mini_chunk_size - 100  # Avoid cutting down the str at the special token
 
         return sorted(set(chunk_boundaries))
 
@@ -148,9 +137,7 @@ class Tokenizer:
         regex_tokenized_it = re.finditer(PAT, raw_data)
         for word in regex_tokenized_it:
             encoded_word = word.group().encode("utf-8")
-            text_words[
-                tuple(encoded_word[i : i + 1] for i in range(len(encoded_word)))
-            ] += 1
+            text_words[tuple(encoded_word[i : i + 1] for i in range(len(encoded_word)))] += 1
         return text_words
 
     @staticmethod
@@ -213,11 +200,7 @@ class Tokenizer:
                 raw_chunk = f.read(read_len)
                 current_pos += read_len
 
-                chunk_data = (
-                    raw_chunk.decode("utf-8", errors="ignore")
-                    .replace("\r\n", "\n")
-                    .replace("\r", "\n")
-                )
+                chunk_data = raw_chunk.decode("utf-8", errors="ignore").replace("\r\n", "\n").replace("\r", "\n")
 
                 stories = split_pattern.split(chunk_data)
                 for story in stories:
@@ -273,16 +256,11 @@ class Tokenizer:
                 final_list.extend(Tokenizer.encode_pretokenizer(part))
         return final_list
 
-    def parallel_process_train(
-        self, worker_num: int, task_num: int, file_path: str | PathLike
-    ) -> dict:
+    def parallel_process_train(self, worker_num: int, task_num: int, file_path: str | PathLike) -> dict:
         with open(file_path, "rb") as f:
             sentence_split = self.special_tokens[0].encode("utf-8")
             boundaries = self.find_chunk_boundaries(f, task_num, sentence_split)
-        tasks = [
-            [file_path, start, end, self.special_tokens]
-            for start, end in zip(boundaries[:-1], boundaries[1:])
-        ]
+        tasks = [[file_path, start, end, self.special_tokens] for start, end in zip(boundaries[:-1], boundaries[1:])]
 
         with Pool(processes=worker_num) as pool:
             results = pool.map(self.train_process_chunk, tasks)
@@ -298,10 +276,7 @@ class Tokenizer:
         Deprecated, parallel encoder, ram cost too big
         """
         boundaries = self.find_string_boundaries(input_str, task_num)
-        tasks = [
-            [input_str, start, end, self.special_tokens]
-            for start, end in zip(boundaries[:-1], boundaries[1:])
-        ]
+        tasks = [[input_str, start, end, self.special_tokens] for start, end in zip(boundaries[:-1], boundaries[1:])]
 
         with Pool(processes=task_num) as pool:
             results = pool.map(self.encode_process_chunk, tasks)
@@ -384,11 +359,7 @@ class Tokenizer:
                 new_word = []
                 i = 0
                 while i < len(prev_word):
-                    if (
-                        i < len(prev_word) - 1
-                        and prev_word[i] == top_pair[0]
-                        and prev_word[i + 1] == top_pair[1]
-                    ):
+                    if i < len(prev_word) - 1 and prev_word[i] == top_pair[0] and prev_word[i + 1] == top_pair[1]:
                         new_word.append(concat_pair)
                         i += 2
                     else:
@@ -430,20 +401,14 @@ class Tokenizer:
             best_pair_rank = float("inf")
             for i in range(len(bytes_ids) - 1):
                 curr_pair = (bytes_ids[i], bytes_ids[i + 1])
-                if (
-                    curr_pair in self.merges_dict
-                    and self.merges_dict[curr_pair] < best_pair_rank
-                ):
+                if curr_pair in self.merges_dict and self.merges_dict[curr_pair] < best_pair_rank:
                     best_pair, best_pair_rank = curr_pair, self.merges_dict[curr_pair]
-            if best_pair == None:
+            if best_pair is None:
                 break
             i = 0
             new_bytes_ids = []
             while i < len(bytes_ids):
-                if (
-                    i < len(bytes_ids) - 1
-                    and (bytes_ids[i], bytes_ids[i + 1]) == best_pair
-                ):
+                if i < len(bytes_ids) - 1 and (bytes_ids[i], bytes_ids[i + 1]) == best_pair:
                     new_bytes_ids.append(best_pair[0] + best_pair[1])
                     i += 2
                 else:
@@ -465,9 +430,7 @@ class Tokenizer:
                 else:
                     encoded_list.extend(self._merge_bytes_to_ids(word))
         else:
-            token_stream = self.encode_stream_chunk(
-                [text, 0, len(text), self.special_tokens]
-            )
+            token_stream = self.encode_stream_chunk([text, 0, len(text), self.special_tokens])
             for word_bytes in token_stream:
                 if word_bytes in self.special_tokens_set:
                     encoded_list.append(self.encode_vocab[word_bytes])
@@ -497,14 +460,14 @@ class Tokenizer:
             pickle.dump(vocab_data, f, protocol=pickle.HIGHEST_PROTOCOL)
         with open(merges_path, "wb") as f:
             pickle.dump(merges_data, f, protocol=pickle.HIGHEST_PROTOCOL)
-        print(f"Model data saved.")
+        print("Model data saved.")
 
     @classmethod
     def from_files(
         cls,
         vocab_filepath: str,
         merges_filepath: str,
-        special_tokens: Optional[list[str]] = None,
+        special_tokens: list[str] | None = None,
     ) -> "Tokenizer":
         with open(vocab_filepath, "rb") as f:
             vocab = pickle.load(f)
