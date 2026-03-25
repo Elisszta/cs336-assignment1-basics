@@ -5,7 +5,7 @@ from torch import Tensor
 import torch.nn as nn
 import einx
 import math
-from jaxtyping import Float, Int
+from jaxtyping import Float, Int, Bool
 
 
 class Linear(nn.Module):
@@ -77,31 +77,98 @@ class SwiGLU(nn.Module):
         return einx.dot("... d_hidden, d_in d_hidden -> ... d_in", swiglu_val, self.weight_2)
 
 
-class RotaryPositionalEmbedding(nn.Module):
+class chunkedRotaryPositionalEmbedding(nn.Module):
     def __init__(self, theta: float, d_k: int, max_seq_len: int, device: torch.device | None = None) -> None:
         super().__init__()
-        theta = theta
-        d_k = d_k
-        max_seq_len = max_seq_len
 
         # Basic rotation freq
-        k_indices = torch.arange(0, d_k, 2).float()  # (2k - 2)
+        k_indices = torch.arange(0, d_k, 2, device=device).float()  # (2k - 2)
         rot_freq = 1.0 / (theta ** (k_indices / d_k))  # theta^((2k - 2) / d)
 
-        # Pre-calculate rotation angle
-        t = torch.arange(max_seq_len).float()
-        angles = 
+        # Pre-calculate rotation angle for max_seq_len
+        t = torch.arange(max_seq_len, device=device).float()
+        angles = cast(Tensor, einx.dot("seq_len, d2 -> seq_len d2", t, rot_freq))
 
-        self.register_buffer("rot_freq", rot_freq)
+        # Register into buffer
+        self.register_buffer("cos_emb", angles.cos())  # max_seq_len x d/2
+        self.register_buffer("sin_emb", angles.sin())
 
     def forward(
         self, x: Float[Tensor, " ... sequence_length d_k"], token_positions: Int[Tensor, " ... sequence_length"]
     ) -> Float[Tensor, "... seq_len d_k"]:
-        angles = cast(
-            Tensor, einx.dot("... seq_len, d2 -> ... seq_len d2", token_positions.float(), self.rot_freq)
-        )  # ... x seqlen x d/2
         x1, x2 = einx.rearrange("... (two d2) -> two ... d2", x, two=2)  # ... x seqlen x d/2
-        sin_emb, cos_emb = torch.sin(angles), angles.cos()
-        x1_new = x1 * cos_emb - x2 * sin_emb
-        x2_new = x2 * cos_emb + x1 * sin_emb
+        cos_idx, sin_idx = self.cos_emb[token_positions], self.sin_emb[token_positions]
+
+        while cos_idx.ndim < x1.ndim:
+            cos_idx = cos_idx.unsqueeze(-3)
+            sin_idx = sin_idx.unsqueeze(-3)
+
+        x1_new = x1 * cos_idx - x2 * sin_idx
+        x2_new = x2 * cos_idx + x1 * sin_idx
         return torch.cat([x1_new, x2_new], -1)
+
+
+class RotaryPositionalEmbedding(nn.Module):
+    def __init__(self, theta: float, d_k: int, max_seq_len: int, device: torch.device | None = None) -> None:
+        super().__init__()
+
+        # Basic rotation freq
+        k_indices = torch.arange(0, d_k, 2, device=device).float()  # (2k - 2)
+        rot_freq = 1.0 / (theta ** (k_indices / d_k))  # theta^((2k - 2) / d)
+
+        # Pre-calculate rotation angle for max_seq_len
+        t = torch.arange(max_seq_len, device=device).float()
+        angles = cast(Tensor, einx.dot("seq_len, d2 -> seq_len d2", t, rot_freq))
+
+        # Register into buffer
+        self.register_buffer("cos_emb", angles.cos())  # max_seq_len x d/2
+        self.register_buffer("sin_emb", angles.sin())
+
+    def forward(
+        self, x: Float[Tensor, " ... sequence_length d_k"], token_positions: Int[Tensor, " ... sequence_length"]
+    ) -> Float[Tensor, "... seq_len d_k"]:
+        x1, x2 = einx.rearrange("... (d2 two) -> two ... d2", x, two=2)  # ... x seqlen x d/2
+        cos_idx, sin_idx = self.cos_emb[token_positions], self.sin_emb[token_positions]  # ... x seq_len x d/2
+
+        # matching x's dim (Cause you don't know the pos's prev dim before seqlen)
+        while cos_idx.ndim < x1.ndim:
+            cos_idx = cos_idx.unsqueeze(-3)
+            sin_idx = sin_idx.unsqueeze(-3)
+
+        x1_new = x1 * cos_idx - x2 * sin_idx
+        x2_new = x2 * cos_idx + x1 * sin_idx
+        combine = torch.stack([x1_new, x2_new])
+        return einx.rearrange("two ... d2 -> ... (d2 two)", combine, two=2)
+
+
+class Softmax(nn.Module):
+    def __init__(self, dim: int) -> None:
+        super().__init__()
+        self.dim = dim
+
+    def forward(self, in_features: Float[Tensor, " ..."]) -> Float[Tensor, " ..."]:
+        max_val = torch.max(in_features, dim=self.dim, keepdim=True).values
+        exp_x = torch.exp(in_features - max_val)
+        sum_val = torch.sum(exp_x, dim=self.dim, keepdim=True)
+        return exp_x / sum_val
+
+
+class Attention(nn.Module):
+    def __init__(
+        self,
+        Q: Float[Tensor, " ... queries d_k"],
+        K: Float[Tensor, " ... keys d_k"],
+        V: Float[Tensor, " ... values d_v"],
+        mask: Bool[Tensor, " ... queries keys"] | None = None,
+    ) -> None:
+        super().__init__()
+        self.Q, self.K, self.V = Q, K, V
+        self.sqrt_dim = math.sqrt(Q.shape[-1])
+
+    def forward(
+        self,
+    ) -> Float[Tensor, " ... queries d_v"]:
+        score = einx.dot("... queries d_k, ... keys d_k -> ... queries keys", self.Q, self.K) / self.sqrt_dim
+        masked_sm
+        sm = Softmax(-1)
+        sm_score = sm(score)
