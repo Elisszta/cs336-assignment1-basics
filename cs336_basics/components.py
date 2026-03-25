@@ -1,3 +1,5 @@
+from typing import cast
+
 import torch
 from torch import Tensor
 import torch.nn as nn
@@ -78,17 +80,28 @@ class SwiGLU(nn.Module):
 class RotaryPositionalEmbedding(nn.Module):
     def __init__(self, theta: float, d_k: int, max_seq_len: int, device: torch.device | None = None) -> None:
         super().__init__()
-        self.theta = theta
-        self.d_k = d_k
-        self.max_seq_len = max_seq_len
-        self.rotate
+        theta = theta
+        d_k = d_k
+        max_seq_len = max_seq_len
+
+        # Basic rotation freq
+        k_indices = torch.arange(0, d_k, 2).float()  # (2k - 2)
+        rot_freq = 1.0 / (theta ** (k_indices / d_k))  # theta^((2k - 2) / d)
+
+        # Pre-calculate rotation angle
+        t = torch.arange(max_seq_len).float()
+        angles = 
+
+        self.register_buffer("rot_freq", rot_freq)
 
     def forward(
         self, x: Float[Tensor, " ... sequence_length d_k"], token_positions: Int[Tensor, " ... sequence_length"]
     ) -> Float[Tensor, "... seq_len d_k"]:
-        k_indices = torch.arange(0, self.d_k, 2)  # (2k - 2)
-        rot_freq = 1.0 / (self.theta ** (k_indices / self.d_k))  # theta^((2k - 2) / d)
-        angles = einx.dot("... seq_len, seq_len")
-        x_rot, y_rot = einx.rearrange("... (two d2) -> two ... d2", x, two=2)
-        x_rot_cos, y_rot_cos = einx.multiply("... d_k/2, d_k/2 -> ... d_k/2", x_rot, angles.cos())
-        return x
+        angles = cast(
+            Tensor, einx.dot("... seq_len, d2 -> ... seq_len d2", token_positions.float(), self.rot_freq)
+        )  # ... x seqlen x d/2
+        x1, x2 = einx.rearrange("... (two d2) -> two ... d2", x, two=2)  # ... x seqlen x d/2
+        sin_emb, cos_emb = torch.sin(angles), angles.cos()
+        x1_new = x1 * cos_emb - x2 * sin_emb
+        x2_new = x2 * cos_emb + x1 * sin_emb
+        return torch.cat([x1_new, x2_new], -1)
