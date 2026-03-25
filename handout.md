@@ -24,5 +24,45 @@
 - a) 24 Passed, 1 XPassed
 
 ### Problem (tokenizer_experiments): Experiments with tokenizers
-- a)
+- a) WAITING FOR IMPLEMENTING
+
+## Transformer Language Model Architecture
+
+### Problem (linear): Implementing the linear module
+- a) Passed
+
+### Problem (embedding): Implement the embedding module
+- a) Passed
+
+### Problem (rmsnorm): Root Mean Square Layer Normalization
+- a) Passed
+
+### Problem (rope): Implement RoPE
+- a) Passed
+
+### Problem (softmax): Implement softmax
+- a) Passed
+
+### Problem (scaled_dot_product_attention): Implement scaled dot-product attention
+- a) Passed
+
+### Problem (multihead_self_attention): Implement causal multi-head self-attention
+- a) Passed
+
+### Problem (transformer_block): Implement the Transformer block
+- a) Passed
+
+### Problem (transformer_lm): Implementing the Transformer LM
+- a) Passed
+
+### Problem (transformer_accounting): Transformer LM resource accounting
+- a) The whole trainable parameters are d + 2vd + n*(2d + 4d^2 + 3d * d_ff) = about 2.14B, which need about 8.1GB (v)RAM
+- b) The whole FLOP is n*(8sd^2 + 4s^2d + 6sdd_ff + 6sd) + 3sd + 2sdv = about 4.5 TFLOPs
+- c) The transformer's FFN part
+- d) The transformer block's FFN part, the bigger model size is, the greater FFN will consume
+- e) About 150 TFLOPs, the attention part consumes most
+
+## Training a Transformer LM
+
+
 
