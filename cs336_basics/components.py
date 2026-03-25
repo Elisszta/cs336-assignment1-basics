@@ -22,7 +22,11 @@ class Linear(nn.Module):
 
 class Embedding(nn.Module):
     def __init__(
-        self, num_embeddings, embedding_dim, device: torch.device | None = None, dtype: torch.dtype | None = None
+        self,
+        num_embeddings: int,
+        embedding_dim: int,
+        device: torch.device | None = None,
+        dtype: torch.dtype | None = None,
     ) -> None:
         super().__init__()
 
@@ -30,7 +34,7 @@ class Embedding(nn.Module):
         self.std = math.sqrt(2 / (num_embeddings + embedding_dim))
         nn.init.trunc_normal_(self.weight, 0, self.std)
 
-    def forward(self, token_ids: torch.Tensor) -> Float[Tensor, "... embedding_dim"]:
+    def forward(self, token_ids: Int[Tensor, " ..."]) -> Float[Tensor, "... embedding_dim"]:
         return einx.get_at("[num_embeddings] embedding_dim, ... -> ... embedding_dim", self.weight, token_ids)
 
 
@@ -79,6 +83,12 @@ class RotaryPositionalEmbedding(nn.Module):
         self.max_seq_len = max_seq_len
         self.rotate
 
-    def forward(self, x: Float[Tensor, "... seq_len d_k"], token_positions: Float[Tensor, "... Seq_len"]) -> Float[Tensor, "... seq_len d_k"]:
-        
-
+    def forward(
+        self, x: Float[Tensor, " ... sequence_length d_k"], token_positions: Int[Tensor, " ... sequence_length"]
+    ) -> Float[Tensor, "... seq_len d_k"]:
+        k_indices = torch.arange(0, self.d_k, 2)  # (2k - 2)
+        rot_freq = 1.0 / (self.theta ** (k_indices / self.d_k))  # theta^((2k - 2) / d)
+        angles = einx.dot("... seq_len, seq_len")
+        x_rot, y_rot = einx.rearrange("... (two d2) -> two ... d2", x, two=2)
+        x_rot_cos, y_rot_cos = einx.multiply("... d_k/2, d_k/2 -> ... d_k/2", x_rot, angles.cos())
+        return x
