@@ -70,4 +70,16 @@
 ### Problem (learning_rate_tuning): Tuning the learning rate 
 - a) 1e2 is quicker to 0 versus 1e1 while 1e3 diverged to inf
 
-num_layer * (16d_model^2 + 2d_moodel) + d*model + d_model * vocab
+### Problem (adamwAccounting): Resource accounting for training with AdamW
+- a) Parameters: num_layer * (16d_model^2 + 2d_moodel) + d*model + 2 * d_model * vocab
+    Activations: batch * (num_layer * (14 * context * d_model + 2 * head * context^2) + context * vocab + context * d_model + context)
+    Grad = Parameters, Optimizer State = 2 * Parameters
+- b) About 31.68 + 13.67 Batch_size GB, the max b_s is 3
+- c) FWD: 2LPB, BWD: 4LPB, Optim: 16P 
+- d) About: 6360 days
+
+### Problem (learning_rate_schedule): Implement cosine learning rate schedule with warmup
+- a) Passed
+
+### Problem (gradient_clipping): Implement gradient clipping
+- a) Passed
