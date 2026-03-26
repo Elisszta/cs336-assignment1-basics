@@ -64,5 +64,10 @@
 
 ## Training a Transformer LM
 
+### Problem (cross_entropy): Implement Cross entropy
+- a) Passed
 
+### Problem (learning_rate_tuning): Tuning the learning rate 
+- a) 1e2 is quicker to 0 versus 1e1 while 1e3 diverged to inf
 
+num_layer * (16d_model^2 + 2d_moodel) + d*model + d_model * vocab

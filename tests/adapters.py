@@ -22,6 +22,7 @@ from cs336_basics.transformer import (
     Transformer,
     Transformer_LM,
 )
+from cs336_basics.functional_tools import CrossEntropyLoss, AdamW
 
 
 def run_linear(
@@ -479,7 +480,8 @@ def run_cross_entropy(
     Returns:
         Float[Tensor, ""]: The average cross-entropy loss across examples.
     """
-    raise NotImplementedError
+    layer = CrossEntropyLoss()
+    return layer(inputs, targets)
 
 
 def run_gradient_clipping(parameters: Iterable[torch.nn.Parameter], max_l2_norm: float) -> None:
@@ -498,7 +500,7 @@ def get_adamw_cls() -> Any:
     """
     Returns a torch.optim.Optimizer that implements AdamW.
     """
-    raise NotImplementedError
+    return AdamW
 
 
 def run_get_lr_cosine_schedule(
