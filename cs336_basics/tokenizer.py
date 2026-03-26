@@ -1,12 +1,13 @@
-import os
-from os import PathLike
-from collections import defaultdict
-import pickle
-from typing import BinaryIO
-from collections.abc import Iterable, Iterator
 import heapq
-
+import os
+import pickle
+import time
+from collections import defaultdict
+from collections.abc import Iterable, Iterator
 from multiprocessing import Pool
+from os import PathLike
+from typing import BinaryIO
+
 import regex as re
 
 
@@ -475,8 +476,6 @@ class Tokenizer:
             merges = pickle.load(f)
         return cls(vocab=vocab, merges=merges, special_tokens=special_tokens)
 
-
-import time
 
 if __name__ == "__main__":
     # start_time = time.perf_counter()
