@@ -23,6 +23,7 @@ from cs336_basics.transformer import (
     Transformer_LM,
 )
 from cs336_basics.tools import CrossEntropyLoss, AdamW, CosineAnnealingLR, GradientClipping
+from cs336_basics.dataloader import DataLoader, save_checkpoint, load_checkpoint
 
 
 def run_linear(
@@ -445,7 +446,8 @@ def run_get_batch(
         is the sampled input sequences, and the second tuple item is the corresponding
         language modeling labels.
     """
-    raise NotImplementedError
+    dataloader = DataLoader(device)
+    return dataloader(dataset, batch_size, context_length)
 
 
 def run_softmax(in_features: Float[Tensor, " ..."], dim: int) -> Float[Tensor, " ..."]:
@@ -549,7 +551,7 @@ def run_save_checkpoint(
             we've completed.
         out (str | os.PathLike | BinaryIO | IO[bytes]): Path or file-like object to serialize the model, optimizer, and iteration to.
     """
-    raise NotImplementedError
+    save_checkpoint(model, optimizer, iteration, out)
 
 
 def run_load_checkpoint(
@@ -570,7 +572,7 @@ def run_load_checkpoint(
     Returns:
         int: the previously-serialized number of iterations.
     """
-    raise NotImplementedError
+    return load_checkpoint(src, model, optimizer)
 
 
 def get_tokenizer(
