@@ -20,7 +20,7 @@ class CrossEntropyLoss(nn.Module):
         self, inputs: Float[Tensor, " batch_size vocab_size"], targets: Int[Tensor, " batch_size"]
     ) -> Float[Tensor, ""]:
         max_logits = einx.max("b v -> b", inputs).values
-        correct_tok = inputs[torch.arange(inputs.shape[0], device=inputs.device), targets]
+        correct_tok = einx.get_at("b [v], b -> b", inputs, targets)
         exp_shifted = cast(Tensor, einx.subtract("b v, b -> b v", inputs, max_logits)).exp()
         log_sum = einx.sum("b v -> b", exp_shifted).log()
         loss = cast(Tensor, log_sum) + cast(Tensor, max_logits) - correct_tok

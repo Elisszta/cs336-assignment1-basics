@@ -18,6 +18,10 @@ class DataLoader:
 
         return (x_batch.to(self.device), y_batch.to(self.device))
 
+    def iter_load(self, dataset: npt.NDArray, batch_size: int, context_length: int):
+        while True:
+            yield self.load(dataset, batch_size, context_length)
+
     def __call__(self, dataset: npt.NDArray, batch_size: int, context_length: int):
         return self.load(dataset, batch_size, context_length)
 

@@ -4,13 +4,14 @@ import torch
 import numpy as np
 import torch.nn as nn
 from torch import Tensor, dtype
+from typing import cast
 from pathlib import Path
+import einx
 
 from cs336_basics.dataloader import DataLoader
 from cs336_basics.tokenizer import Tokenizer
 from cs336_basics.transformer import Transformer_LM
 from cs336_basics.tools import CrossEntropyLoss, AdamW, CosineAnnealingLR, GradientClipping
-from jaxtyping import Int
 
 
 def train(config_path: str):
@@ -25,7 +26,7 @@ def train(config_path: str):
         configs["vocab_filepath"],
         configs["merges_filepath"],
         configs["special_tokens"],
-        configs["special_tokens"],
+        configs["text_path"],
         configs["batch_size"],
         configs["context_len"],
     )
@@ -41,7 +42,7 @@ def train(config_path: str):
     dataset = np.memmap(dataset_path, np.int32, "r")
 
     # Load LM
-    vocab_size, d_model, num_layers, num_heads, d_ff, rope_theta, dtype = (
+    vocab_size, d_model, num_layers, num_heads, d_ff, rope_theta, data_type = (
         configs["vocab_size"],
         configs["d_model"],
         configs["num_layers"],
@@ -60,27 +61,59 @@ def train(config_path: str):
         d_ff,
         rope_theta,
         device=torch.device(device),
+        dtype=data_type,
     )
+    model = cast(nn.Module, torch.compile(model))
 
     # Define tools
-    max_lr, min_lr, warmup_it, cosine_it, max_l2_norm = {
+    max_lr, min_lr, warmup_it, cosine_it, max_l2_norm, eps = (
         configs["max_lr"],
         configs["min_lr"],
         configs["warmup_it"],
         configs["cosine_it"],
         configs["max_l2_norm"],
-    }
+        configs["eps"],
+    )
     criterion = CrossEntropyLoss()
     optimizer = AdamW(model.parameters())
     scheduler = CosineAnnealingLR(max_lr, min_lr, warmup_it, cosine_it)
+    clipper = GradientClipping(max_l2_norm, eps)
 
     # Training
-    it = 0
+    steps = 0
     epochs = configs["epochs"]
     for epoch in range(epochs):
-        for inputs, labels in dataloader(dataset, batch_size, context_len):
-            cur_lr = scheduler(it)
+        # Lazy load inputs and labels in dataloader
+        for batch_it, (inputs, labels) in dataloader.iter_load(dataset, batch_size, context_len):
+            if batch_it >= configs["steps_per_epoch"]:
+                break
+            # Update lr using annealing
+            cur_lr = scheduler(steps)
             for group in optimizer.param_groups:
                 group["lr"] = cur_lr
+
+            # Load datasets
             inputs, labels = inputs.to(device), labels.to(device)
-            outputs = model(inputs)
+
+            # Clearing out grads
+            optimizer.zero_grad()
+
+            # Forwards Propagation
+            logits = einx.rearrange("b s v -> (b s) v", model(inputs))
+            labels = einx.rearrange("b s -> (b s)", labels)
+            loss = criterion(logits, labels)
+
+            if batch_it % 100 == 0:
+                print(f"Step: {it}, Current loss: {loss}")
+
+            # Backward Propagation
+            loss.backward()
+
+            # Clipping Grads
+            clipper(model.parameters())
+
+            # Optimizer updates
+            optimizer.step()
+
+            # Schedular it updates
+            steps += 1
