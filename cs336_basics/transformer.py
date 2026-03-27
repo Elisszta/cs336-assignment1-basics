@@ -1,7 +1,7 @@
 from typing import cast
 
 import torch
-from torch import Tensor
+from torch import Tensor, dtype
 import torch.nn as nn
 import einx
 import math
@@ -177,22 +177,27 @@ class BasicAttention(nn.Module):
 
 
 class MultiHeadAttention(nn.Module):
+    causal_mask: Tensor
+
     def __init__(
         self,
         d_model: int,
         num_heads: int,
+        seq_max_len: int,
         use_rope: bool = False,
-        theta: float | None = None,
-        seq_max_len: int | None = None,
+        theta: float = 10000,
         device: torch.device | None = None,
     ) -> None:
         super().__init__()
         self.attention = BasicAttention()
         self.head, self.use_rope, self.device = num_heads, use_rope, device
+
         if self.use_rope:
-            self.RoPE = RotaryPositionalEmbedding(
-                cast(float, theta), int(d_model / num_heads), cast(int, seq_max_len), device
-            )
+            self.RoPE = RotaryPositionalEmbedding(theta, int(d_model / num_heads), seq_max_len, device)
+
+        # Pre-register Mask tril
+        mask = torch.tril(torch.ones(seq_max_len, seq_max_len, device=device).bool())
+        self.register_buffer("causal_mask", mask, False)
 
     def forward(
         self,
@@ -218,7 +223,9 @@ class MultiHeadAttention(nn.Module):
             token_positions = torch.arange(in_features.shape[-2], device=in_features.device)
         if self.use_rope:
             Q, K = self.RoPE(Q, token_positions), self.RoPE(K, token_positions)
-        mask = torch.tril(torch.ones(in_features.shape[-2], in_features.shape[-2], device=in_features.device).bool())
+
+        seq_len = in_features.shape[-2]
+        mask = self.causal_mask[:seq_len, :seq_len]
         attention_val = einx.rearrange("... head seq_len d_h -> ... seq_len (head d_h)", self.attention(Q, K, V, mask))
         return einx.dot(
             "... seq_len d_v, d_model d_v -> ... seq_len d_model", cast(Tensor, attention_val), o_proj_weight
@@ -226,31 +233,63 @@ class MultiHeadAttention(nn.Module):
 
 
 class Transformer(nn.Module):
-    def __init__(self, d_model: int, num_heads: int, d_ff: int, max_seq_len: int, theta: float) -> None:
+    def __init__(
+        self,
+        d_model: int,
+        num_heads: int,
+        d_ff: int,
+        max_seq_len: int,
+        theta: float,
+        weights: dict[str, Tensor] | None = None,
+        device: torch.device | None = None,
+    ) -> None:
         super().__init__()
-        self.MHA = MultiHeadAttention(d_model, num_heads, True, theta, max_seq_len)
-        self.FFN = SwiGLU(d_model, d_ff)
-        self.PreNormAttn, self.PreNormFFN = RMSNorm(d_model), RMSNorm(d_model)
+        self.MHA = MultiHeadAttention(d_model, num_heads, max_seq_len, True, theta)
+        self.FFN = SwiGLU(d_model, d_ff, device)
+        self.PreNormAttn, self.PreNormFFN = RMSNorm(d_model, device=device), RMSNorm(d_model, device=device)
+        if weights is None:
+            # Initialize Weight_qkvo
+            std_qkvo = math.sqrt(1 / d_model)
+            self.q_proj = nn.Parameter(torch.empty(d_model, d_model, device=device))
+            self.k_proj = nn.Parameter(torch.empty(d_model, d_model, device=device))
+            self.v_proj = nn.Parameter(torch.empty(d_model, d_model, device=device))
+            self.o_proj = nn.Parameter(torch.empty(d_model, d_model, device=device))
+            nn.init.trunc_normal_(self.q_proj, 0, std_qkvo)
+            nn.init.trunc_normal_(self.k_proj, 0, std_qkvo)
+            nn.init.trunc_normal_(self.v_proj, 0, std_qkvo)
+            nn.init.trunc_normal_(self.o_proj, 0, std_qkvo)
+
+            # FFN Parameters is self initialized
+            # RMSNorm is self initialized
+
+        else:
+            self.q_proj = nn.Parameter(weights["attn.q_proj.weight"].to(device))
+            self.k_proj = nn.Parameter(weights["attn.k_proj.weight"].to(device))
+            self.v_proj = nn.Parameter(weights["attn.v_proj.weight"].to(device))
+            self.o_proj = nn.Parameter(weights["attn.output_proj.weight"].to(device))
+
+            # FFN Parameters passing
+            self.FFN.weight_1.data.copy_(weights["ffn.w1.weight"].to(device))
+            self.FFN.weight_2.data.copy_(weights["ffn.w2.weight"].to(device))
+            self.FFN.weight_3.data.copy_(weights["ffn.w3.weight"].to(device))
+
+            # RMSNorm Parameters passing
+            self.PreNormAttn.weight.data.copy_(weights["ln1.weight"].to(device))
+            self.PreNormFFN.weight.data.copy_(weights["ln2.weight"].to(device))
 
     def forward(
         self,
-        weights: dict[str, Tensor],
         in_features: Float[Tensor, " batch sequence_length d_model"],
     ):
-        self.PreNormAttn.weight.data, self.PreNormFFN.weight.data = weights["ln1.weight"], weights["ln2.weight"]
-        self.FFN.weight_1.data, self.FFN.weight_2.data, self.FFN.weight_3.data = (
-            weights["ffn.w1.weight"],
-            weights["ffn.w2.weight"],
-            weights["ffn.w3.weight"],
-        )
-        in_features += self.MHA(
-            weights["attn.q_proj.weight"],
-            weights["attn.k_proj.weight"],
-            weights["attn.v_proj.weight"],
-            weights["attn.output_proj.weight"],
+
+        in_features = in_features + self.MHA(
+            self.q_proj,
+            self.k_proj,
+            self.v_proj,
+            self.o_proj,
             self.PreNormAttn(in_features),
         )
-        in_features += self.FFN(self.PreNormFFN(in_features))
+        in_features = in_features + self.FFN(self.PreNormFFN(in_features))
         return in_features
 
 
@@ -264,41 +303,51 @@ class Transformer_LM(nn.Module):
         num_heads: int,
         d_ff: int,
         rope_theta: float,
+        weights: dict[str, Tensor] | None = None,
+        device: torch.device | None = None,
+        dtype: dtype | None = None,
     ) -> None:
         super().__init__()
         self.input_emb_layer = Embedding(vocab_size, d_model)
-        self.transformer_layer = Transformer(d_model, num_heads, d_ff, context_length, rope_theta)
         self.post_norm_layer = RMSNorm(d_model)
         self.output_emb_layer = Linear(d_model, vocab_size)
-        self.num_layers = num_layers
-        # self.softmax_layer = Softmax(-1)
+        self.layers = nn.ModuleList()
+
+        # Load transformer block weights
+        for layer in range(num_layers):
+            transformer_weight = None
+            if weights is not None:
+                transformer_weight = {
+                    "ln1.weight": weights[f"layers.{layer}.ln1.weight"],
+                    "ln2.weight": weights[f"layers.{layer}.ln2.weight"],
+                    "ffn.w1.weight": weights[f"layers.{layer}.ffn.w1.weight"],
+                    "ffn.w2.weight": weights[f"layers.{layer}.ffn.w2.weight"],
+                    "ffn.w3.weight": weights[f"layers.{layer}.ffn.w3.weight"],
+                    "attn.q_proj.weight": weights[f"layers.{layer}.attn.q_proj.weight"],
+                    "attn.k_proj.weight": weights[f"layers.{layer}.attn.k_proj.weight"],
+                    "attn.v_proj.weight": weights[f"layers.{layer}.attn.v_proj.weight"],
+                    "attn.output_proj.weight": weights[f"layers.{layer}.attn.output_proj.weight"],
+                }
+            self.layers.append(
+                Transformer(d_model, num_heads, d_ff, context_length, rope_theta, transformer_weight, device)
+            )
+
+        # Load other parts' weight
+        if weights is not None:
+            self.input_emb_layer.weight.data, self.post_norm_layer.weight.data, self.output_emb_layer.weight.data = (
+                weights["token_embeddings.weight"],
+                weights["ln_final.weight"],
+                weights["lm_head.weight"],
+            )
 
     def forward(
         self,
-        weights: dict[str, Tensor],
         in_indices: Int[Tensor, " batch_size sequence_length"],
     ):
 
-        self.input_emb_layer.weight.data, self.post_norm_layer.weight.data, self.output_emb_layer.weight.data = (
-            weights["token_embeddings.weight"],
-            weights["ln_final.weight"],
-            weights["lm_head.weight"],
-        )
         data = self.input_emb_layer(in_indices)
-        for num_layer in range(self.num_layers):
-            transformer_weights = {
-                "ln1.weight": weights[f"layers.{num_layer}.ln1.weight"],
-                "ln2.weight": weights[f"layers.{num_layer}.ln2.weight"],
-                "ffn.w1.weight": weights[f"layers.{num_layer}.ffn.w1.weight"],
-                "ffn.w2.weight": weights[f"layers.{num_layer}.ffn.w2.weight"],
-                "ffn.w3.weight": weights[f"layers.{num_layer}.ffn.w3.weight"],
-                "attn.q_proj.weight": weights[f"layers.{num_layer}.attn.q_proj.weight"],
-                "attn.k_proj.weight": weights[f"layers.{num_layer}.attn.k_proj.weight"],
-                "attn.v_proj.weight": weights[f"layers.{num_layer}.attn.v_proj.weight"],
-                "attn.output_proj.weight": weights[f"layers.{num_layer}.attn.output_proj.weight"],
-            }
-            data = self.transformer_layer(transformer_weights, data)
+        for layer in self.layers:
+            data = layer(data)
         data = self.post_norm_layer(data)
-        data = self.output_emb_layer(data)
-        # data = self.softmax_layer(data)
-        return data
+        logits = self.output_emb_layer(data)
+        return logits

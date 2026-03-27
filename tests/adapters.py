@@ -203,7 +203,7 @@ def run_multihead_self_attention_with_rope(
         Float[Tensor, " ... sequence_length d_out"]: Tensor with the output of running your optimized, batched multi-headed attention
         implementation with the given QKV projection weights and input features.
     """
-    layer = MultiHeadAttention(d_model, num_heads, True, theta, max_seq_len)
+    layer = MultiHeadAttention(d_model, num_heads, max_seq_len, True, theta)
     return layer(q_proj_weight, k_proj_weight, v_proj_weight, o_proj_weight, in_features, token_positions)
 
 
@@ -300,8 +300,8 @@ def run_transformer_block(
         Float[Tensor, "batch sequence_length d_model"] Tensor with the output of
         running the Transformer block on the input features while using RoPE.
     """
-    layer = Transformer(d_model, num_heads, d_ff, max_seq_len, theta)
-    return layer(weights, in_features)
+    layer = Transformer(d_model, num_heads, d_ff, max_seq_len, theta, weights)
+    return layer(in_features)
 
 
 def run_transformer_lm(
@@ -383,8 +383,8 @@ def run_transformer_lm(
         Float[Tensor, "batch_size sequence_length vocab_size"]: Tensor with the **predicted unnormalized**
         next-word distribution for each token.
     """
-    LM = Transformer_LM(vocab_size, context_length, d_model, num_layers, num_heads, d_ff, rope_theta)
-    return LM(weights, in_indices)
+    LM = Transformer_LM(vocab_size, context_length, d_model, num_layers, num_heads, d_ff, rope_theta, weights)
+    return LM(in_indices)
 
 
 def run_rmsnorm(

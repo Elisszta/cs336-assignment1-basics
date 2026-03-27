@@ -4,9 +4,6 @@ from typing import IO, BinaryIO
 import numpy.typing as npt
 import torch
 
-# from torch.optim.lr_scheduler import LRScheduler
-import torch.nn as nn
-
 
 class DataLoader:
     def __init__(self, device: str) -> None:
