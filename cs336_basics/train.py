@@ -51,6 +51,12 @@ def train(config_path: str):
         configs["rope_theta"],
         configs["dtype"],
     )
+    if data_type == "bfloat16":
+        data_type = torch.bfloat16
+    elif data_type == "float16":
+        data_type = torch.float16
+    else:
+        data_type = torch.float32
 
     model = Transformer_LM(
         vocab_size,
@@ -84,7 +90,7 @@ def train(config_path: str):
     epochs = configs["epochs"]
     for epoch in range(epochs):
         # Lazy load inputs and labels in dataloader
-        for batch_it, (inputs, labels) in dataloader.iter_load(dataset, batch_size, context_len):
+        for batch_it, (inputs, labels) in enumerate(dataloader.iter_load(dataset, batch_size, context_len)):
             if batch_it >= configs["steps_per_epoch"]:
                 break
             # Update lr using annealing
@@ -99,12 +105,18 @@ def train(config_path: str):
             optimizer.zero_grad()
 
             # Forwards Propagation
-            logits = einx.rearrange("b s v -> (b s) v", model(inputs))
-            labels = einx.rearrange("b s -> (b s)", labels)
-            loss = criterion(logits, labels)
+            if device == "cuda":
+                with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                    logits = einx.rearrange("b s v -> (b s) v", model(inputs))
+                    labels = einx.rearrange("b s -> (b s)", labels)
+                    loss = criterion(logits, labels)
+            else:
+                logits = einx.rearrange("b s v -> (b s) v", model(inputs))
+                labels = einx.rearrange("b s -> (b s)", labels)
+                loss = criterion(logits, labels)
 
             if batch_it % 100 == 0:
-                print(f"Step: {it}, Current loss: {loss}")
+                print(f"Epoch: {epoch}, Step: {steps}, Current loss: {loss.item()}")
 
             # Backward Propagation
             loss.backward()

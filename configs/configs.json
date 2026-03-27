@@ -1,0 +1,26 @@
+{
+    "dataset_path": "datasets/tinystories_train.bin",
+    "vocab_filepath": "vocabs/vocab.json",
+    "merges_filepath": "vocabs/merges.txt",
+    "special_tokens": [
+        "<|endoftext|>"
+    ],
+    "text_path": "datasets/TinyStories-train.txt",
+    "batch_size": 64,
+    "context_len": 512,
+    "vocab_size": 10000,
+    "d_model": 512,
+    "num_layers": 8,
+    "num_heads": 8,
+    "d_ff": 1376,
+    "rope_theta": 10000.0,
+    "dtype": "bfloat16",
+    "max_lr": 5e-4,
+    "min_lr": 5e-5,
+    "warmup_it": 2000,
+    "cosine_it": 50000,
+    "max_l2_norm": 1.0,
+    "eps": 1e-8,
+    "epochs": 1,
+    "steps_per_epoch": 50000
+}
