@@ -457,10 +457,13 @@ class Tokenizer:
             self.vocabulary,
             self.merges,
         )
+        print(f"DEBUG: type of self.vocabulary is {type(self.vocabulary)}")
         with open(vocab_path, "wb") as f:
             pickle.dump(vocab_data, f, protocol=pickle.HIGHEST_PROTOCOL)
+            print(f"Vocab pkl type is {type(self.vocabulary)}")
         with open(merges_path, "wb") as f:
             pickle.dump(merges_data, f, protocol=pickle.HIGHEST_PROTOCOL)
+            (f"Merge pkl type is {type(self.merges)}")
         print("Model data saved.")
 
     @classmethod
@@ -497,7 +500,7 @@ if __name__ == "__main__":
     start_time = time.perf_counter()
     t = Tokenizer()
     vocab, _ = t.tokenizer_trainer(
-        dataset_path="../datasets/TinyStories/train.txt",
+        dataset_path="datasets/TinyStories/train.txt",
         vocab=10000,
         worker_num=100,
         task_num=10,

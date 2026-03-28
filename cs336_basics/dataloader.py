@@ -1,8 +1,11 @@
 import os
+import queue
+import threading
 from typing import IO, BinaryIO
 
 import numpy.typing as npt
 import torch
+import einx
 
 
 class DataLoader:
@@ -10,13 +13,18 @@ class DataLoader:
         self.device = device
 
     def load(self, dataset: npt.NDArray, batch_size: int, context_length: int) -> tuple[torch.Tensor, torch.Tensor]:
-        start_idx = torch.randint(len(dataset) - context_length - 1, (batch_size,))
+        start_idx = torch.randint(len(dataset) - context_length, (batch_size,))
+        length_idx = torch.arange(context_length)
 
-        x_batch = torch.stack([torch.from_numpy(dataset[i : i + context_length]) for i in start_idx])
+        # Fetch all x, y tensors once, avoiding fragment reading.
+        x_idx = einx.add("b, l -> b l", start_idx, length_idx).numpy()
+        y_idx = x_idx + 1
 
-        y_batch = torch.stack([torch.from_numpy(dataset[i + 1 : i + context_length + 1]) for i in start_idx])
-
-        return (x_batch.to(self.device), y_batch.to(self.device))
+        # Using pin memory to allow GPU using DMA to read from memory
+        x_batch = torch.from_numpy(dataset[x_idx]).pin_memory()
+        y_batch = torch.from_numpy(dataset[y_idx]).pin_memory()
+        # And not to block cpu for next step
+        return (x_batch.to(self.device, non_blocking=True), y_batch.to(self.device, non_blocking=True))
 
     def iter_load(self, dataset: npt.NDArray, batch_size: int, context_length: int):
         while True:
@@ -24,6 +32,29 @@ class DataLoader:
 
     def __call__(self, dataset: npt.NDArray, batch_size: int, context_length: int):
         return self.load(dataset, batch_size, context_length)
+
+
+class Prefetcher:
+    def __init__(self, generator, buffer_size: int = 3) -> None:
+        self.queue = queue.Queue(buffer_size)
+        self.generator = generator
+        self.thread = threading.Thread(target=self._fill_queue, daemon=True)
+        self.thread.start()
+
+    def _fill_queue(self):
+        for item in self.generator:
+            self.queue.put(item)
+        self.queue.put(None)
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        print(f"DEBUG: Buffer size is {self.queue.qsize()}")
+        item = self.queue.get()
+        if item is None:
+            raise StopIteration
+        return item
 
 
 def save_checkpoint(
