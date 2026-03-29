@@ -50,7 +50,7 @@ class Prefetcher:
         return self
 
     def __next__(self):
-        print(f"DEBUG: Buffer size is {self.queue.qsize()}")
+        # print(f"DEBUG: Buffer size is {self.queue.qsize()}")
         item = self.queue.get()
         if item is None:
             raise StopIteration

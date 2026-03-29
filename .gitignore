@@ -5,6 +5,7 @@ vocabs/
 # Output / Checkpoint
 cs336_basics/*.pkl
 ckpt/
+wandb/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

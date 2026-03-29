@@ -1,13 +1,14 @@
 import json
+import math
 
 import torch
 import numpy as np
 import torch.nn as nn
-from torch import Tensor, dtype
 from typing import cast
 from pathlib import Path
 import einx
 from tqdm import tqdm
+import wandb
 
 from cs336_basics.dataloader import DataLoader, Prefetcher, save_checkpoint
 from cs336_basics.tokenizer import Tokenizer
@@ -23,14 +24,29 @@ def train(config_path: str):
     # Load configs
     with open(config_path, encoding="utf-8") as f:
         configs = json.load(f)
-    dataset_path, vocab_filepath, merges_filepath, special_tokens, text_path, batch_size, context_len = (
+    (
+        dataset_path,
+        valid_path,
+        vocab_filepath,
+        merges_filepath,
+        special_tokens,
+        text_path,
+        valid_text_path,
+        batch_size,
+        context_len,
+    ) = (
         configs["dataset_path"],
+        configs["valid_path"],
         configs["vocab_filepath"],
         configs["merges_filepath"],
         configs["special_tokens"],
         configs["text_path"],
+        configs["valid_text_path"],
         configs["batch_size"],
         configs["context_len"],
+    )
+    run = wandb.init(
+        entity="eli404-beijing-institute-of-technology", project="Transformer_LM_TinyStories", config=configs
     )
     print("Settings loaded.")
 
@@ -44,7 +60,16 @@ def train(config_path: str):
                     tokens = t.encode(line)
                     if tokens:
                         np.array(tokens, dtype=np.int32).tofile(f_out)
+    if not Path(valid_path).is_file():
+        t = Tokenizer().from_files(vocab_filepath, merges_filepath, special_tokens)
+        with open(valid_path, "wb") as f_out:
+            with open(valid_text_path, encoding="utf-8") as f_in:
+                for line in tqdm(f_in, desc="Processing Chunks"):
+                    tokens = t.encode(line)
+                    if tokens:
+                        np.array(tokens, dtype=np.int32).tofile(f_out)
     dataset = np.memmap(dataset_path, np.int32, "r")
+    validset = np.memmap(valid_path, np.int32, "r")
     print("Dataset loaded.")
 
     # Load LM
@@ -93,18 +118,20 @@ def train(config_path: str):
 
     # Training
     steps = 0
-    epochs, buffer_size, steps_per_epoch, save_path = (
+    epochs, buffer_size, steps_per_epoch, val_size, save_path = (
         configs["epochs"],
         configs["buffer_size"],
         configs["steps_per_epoch"],
+        configs["val_size"],
         configs["save_path"],
     )
     # Using prefetcher to multi-thread-ly build a queue for dataload, enhance data load efficiency
-    prefetcher = Prefetcher(dataloader.iter_load(dataset, batch_size, context_len), buffer_size)
-
+    prefetcher_train = Prefetcher(dataloader.iter_load(dataset, batch_size, context_len), buffer_size)
+    prefetcher_valid = Prefetcher(dataloader.iter_load(validset, batch_size, context_len), buffer_size)
+    best_loss = float("inf")
     for epoch in range(epochs):
         # tqdm progress bar
-        progress = tqdm(enumerate(prefetcher), total=steps_per_epoch, desc=f"Epoch {epoch}: ")
+        progress = tqdm(enumerate(prefetcher_train), total=steps_per_epoch, desc=f"Epoch {epoch}: ")
         # Lazy load inputs and labels in dataloader
         for batch_it, (inputs, labels) in progress:
             if batch_it >= steps_per_epoch:
@@ -128,11 +155,18 @@ def train(config_path: str):
                 labels = einx.rearrange("b s -> (b s)", labels)
                 loss = criterion(logits, labels)
 
-            if batch_it % 100 == 0:
-                progress.set_postfix({"loss": f"{loss.item():.5f}"})
-
-            # if steps % 1000 == 0:
-            #     save_checkpoint(model, optimizer, steps, save_path + f"_{steps}.pt")
+            if batch_it % 10 == 0:
+                cur_loss = loss.item()
+                if cur_loss < best_loss:
+                    best_loss = cur_loss
+                    if steps > 5000:
+                        save_checkpoint(model, optimizer, steps, save_path + "_best.pt")
+                run.log({"iter": steps, "loss": cur_loss, "ppl": math.exp(cur_loss), "lr": cur_lr})
+                progress.set_postfix({"loss": f"{cur_loss:.5f}"})
+                if batch_it % 2000 == 0:
+                    valid_loss = valid(model, prefetcher_valid, val_size, criterion, device)
+                    run.log({"iter": steps, "val_loss": valid_loss, "val_ppl": math.exp(valid_loss)})
+                    save_checkpoint(model, optimizer, steps, save_path + "_latest.pt")
 
             # Backward Propagation
             loss.backward()
@@ -145,6 +179,23 @@ def train(config_path: str):
 
             # Schedular it updates
             steps += 1
+
+
+def valid(model, val_loader, val_size, criterion, device) -> float:
+    model.eval()
+    total_loss = 0
+    with torch.no_grad():
+        for it, (inputs, labels) in enumerate(val_loader):
+            if it >= val_size:
+                break
+            with torch.autocast(device, torch.bfloat16 if device == "cuda" else torch.float32):
+                logits = model(inputs)
+                logits = einx.rearrange("b s v -> (b s) v", logits)
+                labels = einx.rearrange("b s -> (b s)", labels)
+                total_loss += criterion(logits, labels).item()
+    avg_loss = total_loss / val_size
+    model.train()
+    return avg_loss
 
 
 if __name__ == "__main__":

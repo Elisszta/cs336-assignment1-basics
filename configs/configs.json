@@ -1,13 +1,16 @@
 {
     "dataset_path": "datasets/TinyStories/train.bin",
+    "valid_path": "datasets/TinyStories/valid.bin",
     "vocab_filepath": "vocabs/TinyStories10K_vocab.pkl",
     "merges_filepath": "vocabs/TinyStories10K_merges.pkl",
     "special_tokens": [
         "<|endoftext|>"
     ],
     "text_path": "datasets/TinyStories/train.txt",
-    "save_path": "ckpt/model_params",
+    "valid_text_path": "datasets/TinyStories/valid.txt",
+    "save_path": "ckpt/task_tinystories_params",
     "batch_size": 64,
+    "val_size": 16,
     "context_len": 512,
     "vocab_size": 10000,
     "d_model": 512,
@@ -19,7 +22,7 @@
     "max_lr": 5e-4,
     "min_lr": 5e-5,
     "warmup_it": 2000,
-    "cosine_it": 50000,
+    "cosine_it": 20000,
     "max_l2_norm": 1.0,
     "eps": 1e-8,
     "epochs": 1,
