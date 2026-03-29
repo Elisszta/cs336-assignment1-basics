@@ -67,9 +67,23 @@ def save_checkpoint(
 
 
 def load_checkpoint(
-    src: str | os.PathLike | BinaryIO | IO[bytes], model: torch.nn.Module, optimizer: torch.optim.Optimizer
+    src: str | os.PathLike | BinaryIO | IO[bytes],
+    model: torch.nn.Module,
+    optimizer: torch.optim.Optimizer | None = None,
 ):
     checkpoint = torch.load(src)
-    model.load_state_dict(checkpoint["model_params"])
-    optimizer.load_state_dict(checkpoint["optim_params"])
+
+    # Restore uncompiled model
+    state_dict = checkpoint["model_params"]
+    uncompiled_state_dict = {}
+    for k, v in state_dict.items():
+        if k.startswith("_orig_mod."):
+            original_k = k[10:]
+            uncompiled_state_dict[original_k] = v
+        else:
+            uncompiled_state_dict[k] = v
+
+    model.load_state_dict(uncompiled_state_dict)
+    if optimizer is not None:
+        optimizer.load_state_dict(checkpoint["optim_params"])
     return checkpoint.get("it", 0)

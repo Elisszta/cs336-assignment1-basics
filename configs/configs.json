@@ -27,5 +27,7 @@
     "eps": 1e-8,
     "epochs": 1,
     "steps_per_epoch": 10000,
-    "buffer_size": 3
+    "buffer_size": 3,
+    "wandb_entity": "eli404-beijing-institute-of-technology",
+    "proj_name": "Transformer_LM_TinyStories"
 }

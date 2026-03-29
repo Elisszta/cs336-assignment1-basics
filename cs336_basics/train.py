@@ -34,6 +34,8 @@ def train(config_path: str):
         valid_text_path,
         batch_size,
         context_len,
+        wandb_entity,
+        proj_name,
     ) = (
         configs["dataset_path"],
         configs["valid_path"],
@@ -44,10 +46,10 @@ def train(config_path: str):
         configs["valid_text_path"],
         configs["batch_size"],
         configs["context_len"],
+        configs["wandb_entity"],
+        configs["proj_name"],
     )
-    run = wandb.init(
-        entity="eli404-beijing-institute-of-technology", project="Transformer_LM_TinyStories", config=configs
-    )
+    run = wandb.init(entity=wandb_entity, project=proj_name, config=configs)
     print("Settings loaded.")
 
     # Load data
@@ -56,7 +58,7 @@ def train(config_path: str):
         t = Tokenizer().from_files(vocab_filepath, merges_filepath, special_tokens)
         with open(dataset_path, "wb") as f_out:
             with open(text_path, encoding="utf-8") as f_in:
-                for line in tqdm(f_in, desc="Processing Chunks"):
+                for line in tqdm(f_in, desc="Processing Train Dataloader"):
                     tokens = t.encode(line)
                     if tokens:
                         np.array(tokens, dtype=np.int32).tofile(f_out)
@@ -64,7 +66,7 @@ def train(config_path: str):
         t = Tokenizer().from_files(vocab_filepath, merges_filepath, special_tokens)
         with open(valid_path, "wb") as f_out:
             with open(valid_text_path, encoding="utf-8") as f_in:
-                for line in tqdm(f_in, desc="Processing Chunks"):
+                for line in tqdm(f_in, desc="Processing Valid Dataloader"):
                     tokens = t.encode(line)
                     if tokens:
                         np.array(tokens, dtype=np.int32).tofile(f_out)
@@ -144,7 +146,7 @@ def train(config_path: str):
             # Clearing out grads
             optimizer.zero_grad()
 
-            # Forwards Propagation
+            # Forwards Propagation, using mixed precision
             if device == "cuda":
                 with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                     logits = einx.rearrange("b s v -> (b s) v", model(inputs))
@@ -155,6 +157,7 @@ def train(config_path: str):
                 labels = einx.rearrange("b s -> (b s)", labels)
                 loss = criterion(logits, labels)
 
+            # 10 steps to update loss, 2000 steps to save latest ckpt, after 5000 steps to save best ckpt
             if batch_it % 10 == 0:
                 cur_loss = loss.item()
                 if cur_loss < best_loss:
