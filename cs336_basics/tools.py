@@ -129,3 +129,36 @@ class GradientClipping:
 
     def __call__(self, parameters: Iterable[torch.nn.Parameter]):
         return self.clipping(parameters)
+
+
+def Softmax(logits: Float[Tensor, "... vocab_size"]) -> Float[Tensor, "... vocab_size"]:
+    # Sub-max trick, preventing exp overflow
+    # logits_max = einx.max("... v -> ... [1]", logits)
+    # logits_exp = (logits - logits_max).exp()
+    # logits_sum = einx.sum("... v -> ... [1]", logits_exp)
+    # return logits_exp / logits_sum
+    return cast(Tensor, einx.softmax("... [v]", logits))
+
+
+def TemperatureScaling(logits: Float[Tensor, "... vocab_size"], temperature: float) -> Float[Tensor, "... vocab_size"]:
+    logits_scaled = logits / temperature
+    return Softmax(logits_scaled)
+
+
+def NucleusSampling(logits: Float[Tensor, "... vocab_size"], temperature: float, p: float) -> Tensor:
+    probs = TemperatureScaling(logits, temperature)
+    # Get descending sorted probs
+    sorted_probs, sorted_indices = torch.sort(probs, -1, True)
+    # Accumulate probs till reaches p
+    cumulative_probs = torch.cumsum(sorted_probs, -1)
+    removed_indices = cumulative_probs > p
+    # Masking to mark tokens pending to remove
+    removed_indices[..., 1:] = removed_indices[..., :-1].clone()
+    removed_indices[..., 0] = False
+    # Zeroing probs of removed tokens
+    sorted_probs[removed_indices] = 0
+    # Normalizing
+    sorted_probs = sorted_probs / einx.sum("... v -> ...", sorted_probs)
+    # Sampling
+    next_token_sorted_id = torch.multinomial(sorted_probs, 1)
+    return torch.gather(sorted_indices, -1, next_token_sorted_id)

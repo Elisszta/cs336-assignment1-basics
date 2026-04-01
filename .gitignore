@@ -1,8 +1,11 @@
 # Datasets / Decoded datasets
 datasets/
+vocabs/
 
 # Output / Checkpoint
 cs336_basics/*.pkl
+ckpt/
+wandb/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -167,3 +170,4 @@ cython_debug/
 
 .ruff_cache/
 *.zip
+cuda-keyring_1.1-1_all.deb
