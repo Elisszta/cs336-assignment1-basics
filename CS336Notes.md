@@ -126,7 +126,7 @@ RoPE里的$m,\theta_i$是固定且预先定义已知的，不学习
 
 ### Weight Decay
 
-引入Weight Decay其实很玄学的不是为了防止过拟合（因为大多数只训练1 epoch），而是因为能够**带来更好的loss表现**
+引入Weight Decay其实很玄学的不是为了防止过拟合（因为很多时候只训练1 epoch），而是因为能够**带来更好的loss表现**
 
 
 
@@ -164,3 +164,16 @@ $$
 ### Sparse Attention
 
 稀疏注意力就是，滑动式的只注意自己往前k个词（SWA），这样能将原先$n^2$的复杂度降到n
+
+
+
+### MLA
+
+就是在算KV时用Linear把其从`d_model`降维到更低维度，这样降低KV-Cache的占用内存，然后再Linear升维即可；细节上，在实现Latent的时候，一部分QKV的维度保留不降，做RoPE，剩下的降维，然后和RoPE后的Concat，最后再原路返回升维
+
+
+
+### MoE
+
+本质上就是把FFN分了很多份，每次选择某几个做FFN，这样能在不增加计算量的同时增加参数量；当前普遍策略是**每个device，每个expert尽量分到同等数量token**
+
