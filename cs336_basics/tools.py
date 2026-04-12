@@ -117,15 +117,15 @@ class GradientClipping:
 
     @torch.no_grad()
     def clipping(self, parameters: Iterable[torch.nn.Parameter]) -> None:
-        total_l2_norm = 0.0  # L2 Norm for the whole parameters
         grads = [p.grad for p in parameters if p.grad is not None]
-        for g in grads:
-            total_l2_norm += torch.linalg.vector_norm(g, ord=2) ** 2
-        total_l2_norm = math.sqrt(total_l2_norm)
-        if total_l2_norm > self.max_l2:
-            coef = self.max_l2 / (total_l2_norm + self.eps)
-            for g in grads:
-                g.mul_(coef)
+        if not grads:
+            return
+        each_norms = torch._foreach_norm(grads, 2)
+        total_norms = torch.linalg.vector_norm(torch.stack(each_norms))
+
+        if total_norms > self.max_l2:
+            coef = self.max_l2 / (total_norms + self.eps)
+            torch._foreach_mul_(grads, coef)
 
     def __call__(self, parameters: Iterable[torch.nn.Parameter]):
         return self.clipping(parameters)
